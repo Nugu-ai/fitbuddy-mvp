@@ -1,4 +1,3 @@
-// src/components/Character.js
 import React, { useState, useEffect } from "react";
 
 // 미리 정의된 캐릭터 목록 (ID, 이름, 이미지 경로)
@@ -12,86 +11,110 @@ const CHARACTER_LIST = [
 ];
 
 export default function Character({ currentUserId }) {
-    // 현재 선택된 캐릭터 ID (기본값으로 첫 번째 캐릭터)
+    // 현재 선택된 캐릭터 ID (기본: 첫 번째 캐릭터)
     const [selectedCharId, setSelectedCharId] = useState(CHARACTER_LIST[0].id);
-    // { [charId]: exp, ... }
-    const [charExpMap, setCharExpMap] = useState({});
-    // { [charId]: level, ... }
-    const [charLevelMap, setCharLevelMap] = useState({});
+    // { [charId]: { level, exp } } 형태로 캐릭터별 레벨 & 상대 경험치 저장
+    const [charDataMap, setCharDataMap] = useState({});
 
-    // 경험치 → 레벨 변환 공식. 레벨 n으로 가기 위한 총 EXP = 100 * [n * (n - 1) / 2]
-    const calculateLevel = (expValue) => {
-        const x = expValue / 100;
-        const lvl = Math.floor((1 + Math.sqrt(1 + 8 * x)) / 2);
-        return lvl < 1 ? 1 : lvl;
-    };
+    // “레벨업에 필요한 경험치” 계산: 현재 레벨 x 100
+    const getRequiredExp = (level) => level * 100;
 
-    // “다음 레벨 달성에 필요한 총 누적 경험치”를 계산
-    // 예: 현재 레벨이 3이면, 4레벨 달성에 필요한 총 경험치 = 100 * (4 * 3 / 2) = 600
-    const getTotalExpForNextLevel = (currentLevel) => {
-        const next = currentLevel + 1;
-        return 100 * ((next * (next - 1)) / 2);
-    };
-
-    // localStorage에서 “exp-<userId>-<charId>” 읽어서 state에 반영
+    // localStorage에서 저장된 “level-<userId>-<charId>” 및 “expRel-<userId>-<charId>”를 읽어와서
+    // charDataMap을 구성하는 함수
     const loadAllCharData = () => {
         if (!currentUserId) {
-            setCharExpMap({});
-            setCharLevelMap({});
+            setCharDataMap({});
             return;
         }
-        const expMap = {};
-        const levelMap = {};
-
+        const dataMap = {};
         CHARACTER_LIST.forEach(({ id }) => {
-            const key = `exp-${currentUserId}-${id}`;
-            const storedExp = parseInt(localStorage.getItem(key) || "0", 10);
-            expMap[id] = storedExp;
-            levelMap[id] = calculateLevel(storedExp);
-        });
+            const levelKey = `level-${currentUserId}-${id}`;
+            const expKey = `expRel-${currentUserId}-${id}`;
 
-        setCharExpMap(expMap);
-        setCharLevelMap(levelMap);
+            const storedLevel = parseInt(
+                localStorage.getItem(levelKey) || "1",
+                10
+            );
+            const storedRelExp = parseInt(
+                localStorage.getItem(expKey) || "0",
+                10
+            );
+
+            dataMap[id] = {
+                level: storedLevel,
+                exp: storedRelExp,
+            };
+        });
+        setCharDataMap(dataMap);
     };
 
-    // 마운트될 때와 currentUserId가 바뀔 때마다 데이터 로드
+    // 마운트되거나 currentUserId가 바뀔 때마다 캐릭터 데이터를 로드
     useEffect(() => {
         loadAllCharData();
     }, [currentUserId]);
 
-    // 선택된 캐릭터에 경험치를 추가 (+10 고정이 아니라 amount로 유연하게)
+    // localStorage 키: 유저 전체 경험치 풀
+    const getUserExpKey = (userId) => `userExp-${userId}`;
+
+    // 현재 유저 전체 경험치 풀 값을 가져오는 함수
+    const getUserExp = () => {
+        if (!currentUserId) return 0;
+        const key = getUserExpKey(currentUserId);
+        return parseInt(localStorage.getItem(key) || "0", 10);
+    };
+
+    // 선택된 캐릭터에 경험치를 추가하는 함수 (amount 만큼 부여)
     const addExpToSelected = (amount = 10) => {
         if (!currentUserId) return;
-        const charId = selectedCharId;
-        const key = `exp-${currentUserId}-${charId}`;
-        const prevExp = parseInt(localStorage.getItem(key) || "0", 10);
-        const prevLevel = calculateLevel(prevExp);
-        const totalForNext = getTotalExpForNextLevel(prevLevel);
-        const expNeeded = totalForNext - prevExp;
 
-        let nextExp;
-        let nextLevel;
+        // 1) 먼저 “유저 전체 경험치 풀”이 amount 이상인지 체크
+        const userExpKey = getUserExpKey(currentUserId);
+        const prevUserExp = parseInt(
+            localStorage.getItem(userExpKey) || "0",
+            10
+        );
 
-        if (amount >= expNeeded) {
-            // 남은 경험치만큼 채워서 레벨업 → 경험치 초기화(0)
-            nextExp = 0;
-            nextLevel = prevLevel + 1;
-        } else {
-            // 아직 레벨업되지 않는 상황: prevExp + amount
-            nextExp = prevExp + amount;
-            nextLevel = calculateLevel(nextExp);
+        if (prevUserExp < amount) {
+            alert("유저 경험치 풀이 부족합니다!\n루틴을 더 기록해야합니다.");
+            return;
         }
 
-        // localStorage에 저장
-        localStorage.setItem(key, nextExp);
-        // state 업데이트
-        setCharExpMap((prev) => ({
+        // 2) 캐릭터별 상대 경험치/레벨 로드
+        const charId = selectedCharId;
+        const levelKey = `level-${currentUserId}-${charId}`;
+        const expKey = `expRel-${currentUserId}-${charId}`;
+
+        const prevLevel = charDataMap[charId]?.level || 1;
+        const prevRelExp = charDataMap[charId]?.exp || 0;
+
+        // 이번 레벨에서 레벨업에 필요한 총 경험치
+        const requiredExp = getRequiredExp(prevLevel);
+
+        let nextLevel = prevLevel;
+        let nextRelExp = prevRelExp + amount;
+
+        // 레벨업 조건: 상대 경험치 >= 필요 경험치
+        if (nextRelExp >= requiredExp) {
+            nextLevel = prevLevel + 1; // 레벨 1 증가
+            nextRelExp = 0; // 상대 경험치를 0으로 초기화
+        }
+
+        // 3) 로컬스토리지 업데이트
+        // (가) 유저 전체 exp 풀에서 amount만큼 차감
+        const nextUserExp = prevUserExp - amount;
+        localStorage.setItem(userExpKey, nextUserExp);
+
+        // (나) 캐릭터별 level & relative exp 업데이트
+        localStorage.setItem(levelKey, nextLevel);
+        localStorage.setItem(expKey, nextRelExp);
+
+        // 4) React 상태 업데이트
+        setCharDataMap((prev) => ({
             ...prev,
-            [charId]: nextExp,
-        }));
-        setCharLevelMap((prev) => ({
-            ...prev,
-            [charId]: nextLevel,
+            [charId]: {
+                level: nextLevel,
+                exp: nextRelExp,
+            },
         }));
     };
 
@@ -99,15 +122,16 @@ export default function Character({ currentUserId }) {
     const selectedCharInfo = CHARACTER_LIST.find(
         (c) => c.id === selectedCharId
     );
-    // 선택된 캐릭터의 exp, level
-    const currentExp = charExpMap[selectedCharId] || 0;
-    const currentLevel = charLevelMap[selectedCharId] || 1;
+    const currentLevel = charDataMap[selectedCharId]?.level || 1;
+    const currentRelExp = charDataMap[selectedCharId]?.exp || 0;
+    const requiredExpForNext = getRequiredExp(currentLevel);
+    const userExp = getUserExp(); // 화면에 보여줄 때 사용
 
     return (
         <div className="text-center">
-            {/** ================================== 
-          1) 상단: 선택된 캐릭터 큰 뷰
-      ==================================== **/}
+            {/** ==========================
+          상단: 선택된 캐릭터 큰 뷰
+      =========================== **/}
             <div className="mb-4">
                 <img
                     src={selectedCharInfo.img}
@@ -116,53 +140,65 @@ export default function Character({ currentUserId }) {
                     style={{ width: "200px" }}
                 />
                 <h3 className="mt-2">{selectedCharInfo.name}</h3>
-                <p className="h5 mb-1">레벨: {currentLevel}</p>
+                <p className="h5 mb-1">LV.: {currentLevel}</p>
 
-                {/** 경험치 진행 바 */}
+                {/** 유저 전체 경험치 풀이 얼마 남았는지 보여주기 */}
+                <p className="text-info mb-2">
+                    내 EXP: <strong>{userExp}</strong>
+                </p>
+
+                {/** 경험치 진행 바 (현재 상대 exp / 필요 exp), 중앙에 텍스트 표시 **/}
                 <div
                     className="progress w-75 mx-auto"
-                    style={{ height: "20px" }}
+                    style={{ height: "24px" }}
                 >
                     {(() => {
-                        const totalForNext =
-                            getTotalExpForNextLevel(currentLevel);
                         const percent = Math.min(
-                            Math.floor((currentExp / totalForNext) * 100),
+                            Math.floor(
+                                (currentRelExp / requiredExpForNext) * 100
+                            ),
                             100
                         );
                         return (
                             <div
-                                className="progress-bar bg-success"
+                                className="progress-bar bg-success d-flex justify-content-center align-items-center"
                                 role="progressbar"
                                 style={{ width: `${percent}%` }}
                                 aria-valuenow={percent}
                                 aria-valuemin="0"
                                 aria-valuemax="100"
                             >
-                                {currentExp} / {totalForNext}
+                                {currentRelExp} / {requiredExpForNext}
                             </div>
                         );
                     })()}
                 </div>
 
-                {/** 디버그용: 클릭 시 경험치 +10 (루틴 입력 시 여기를 호출) */}
+                {/** 테스트용 버튼: 클릭 시 선택된 캐릭터에 +10 EXP **/}
                 <button
                     className="btn btn-primary btn-sm mt-3"
                     onClick={() => addExpToSelected(10)}
+                    disabled={userExp < 10} // 유저 exp 풀이 10 미만이면 비활성화
                 >
                     +10 EXP
                 </button>
             </div>
 
-            {/** ================================== 
-          2) 하단: 모든 캐릭터 카드 그리드
-      ==================================== **/}
+            {/** ===============================
+          하단: 캐릭터 카드 그리드 목록
+      =============================== **/}
             <div className="container">
                 <div className="row gy-3 gx-2 justify-content-center">
                     {CHARACTER_LIST.map((char) => {
-                        const exp = charExpMap[char.id] || 0;
-                        const lvl = charLevelMap[char.id] || 1;
+                        const lvl = charDataMap[char.id]?.level || 1;
+                        const relExp = charDataMap[char.id]?.exp || 0;
+                        const reqExp = getRequiredExp(lvl);
                         const isSelected = char.id === selectedCharId;
+
+                        const percent = Math.min(
+                            Math.floor((relExp / reqExp) * 100),
+                            100
+                        );
 
                         return (
                             <div
@@ -192,43 +228,26 @@ export default function Character({ currentUserId }) {
                                             {char.name}
                                         </h6>
                                         <p className="mb-1">LV. {lvl}</p>
-                                        {/** 작은 경험치 바 */}
+                                        {/** 작은 경험치 바 **/}
                                         <div
                                             className="progress"
                                             style={{ height: "8px" }}
                                         >
-                                            {(() => {
-                                                const totalForNext =
-                                                    getTotalExpForNextLevel(
-                                                        lvl
-                                                    );
-                                                const pct = Math.min(
-                                                    Math.floor(
-                                                        (exp / totalForNext) *
-                                                            100
-                                                    ),
-                                                    100
-                                                );
-                                                return (
-                                                    <div
-                                                        className={
-                                                            "progress-bar " +
-                                                            (pct < 50
-                                                                ? "bg-secondary"
-                                                                : pct < 75
-                                                                ? "bg-info"
-                                                                : "bg-success")
-                                                        }
-                                                        role="progressbar"
-                                                        style={{
-                                                            width: `${pct}%`,
-                                                        }}
-                                                        aria-valuenow={pct}
-                                                        aria-valuemin="0"
-                                                        aria-valuemax="100"
-                                                    ></div>
-                                                );
-                                            })()}
+                                            <div
+                                                className={
+                                                    "progress-bar " +
+                                                    (percent < 50
+                                                        ? "bg-secondary"
+                                                        : percent < 75
+                                                        ? "bg-info"
+                                                        : "bg-success")
+                                                }
+                                                role="progressbar"
+                                                style={{ width: `${percent}%` }}
+                                                aria-valuenow={percent}
+                                                aria-valuemin="0"
+                                                aria-valuemax="100"
+                                            ></div>
                                         </div>
                                     </div>
                                 </div>

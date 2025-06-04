@@ -1,8 +1,14 @@
-// src/components/Routine.js
 import React, { useState, useEffect } from "react";
 
-export default function Routine({ currentUserId, onExpChange }) {
-    // 오늘 날짜 (KST 기준) YYYY-MM-DD 형식
+export default function Routine({ currentUserId }) {
+    const [selectedDate, setSelectedDate] = useState(
+        new Date().toISOString().split("T")[0]
+    );
+    const [existingRoutines, setExistingRoutines] = useState([]);
+    const [newRoutineText, setNewRoutineText] = useState("");
+    const [statusMsg, setStatusMsg] = useState("");
+
+    // “오늘 날짜” 계산 (YYYY-MM-DD)
     const getToday = () => {
         const d = new Date();
         const year = d.getFullYear();
@@ -14,26 +20,24 @@ export default function Routine({ currentUserId, onExpChange }) {
     };
     const todayDate = getToday();
 
-    const [selectedDate, setSelectedDate] = useState(todayDate);
-    const [existingRoutines, setExistingRoutines] = useState([]);
-    const [newRoutineText, setNewRoutineText] = useState("");
-    const [statusMsg, setStatusMsg] = useState("");
-
     // localStorage 키 형식: routines-<userId>-<YYYY-MM-DD>
-    const getKey = (userId, date) => `routines-${userId}-${date}`;
+    const getRoutineKey = (userId, date) => `routines-${userId}-${date}`;
 
-    // 선택된 날짜에 저장된 루틴 목록을 불러와서 state에 반영
+    // localStorage 키: 유저 전체 경험치 풀
+    const getUserExpKey = (userId) => `userExp-${userId}`;
+
+    // 선택된 날짜의 루틴 목록 로드
     const loadRoutines = () => {
         if (!currentUserId) {
             setExistingRoutines([]);
             return;
         }
-        const key = getKey(currentUserId, selectedDate);
+        const key = getRoutineKey(currentUserId, selectedDate);
         const arr = JSON.parse(localStorage.getItem(key) || "[]");
         setExistingRoutines(arr);
     };
 
-    // selectedDate나 currentUserId가 바뀔 때마다 목록을 다시 불러옴
+    // selectedDate 또는 currentUserId가 바뀔 때마다 목록을 다시 로드
     useEffect(() => {
         loadRoutines();
     }, [selectedDate, currentUserId]);
@@ -58,7 +62,7 @@ export default function Routine({ currentUserId, onExpChange }) {
             return;
         }
 
-        const key = getKey(currentUserId, selectedDate);
+        const key = getRoutineKey(currentUserId, selectedDate);
         const arr = JSON.parse(localStorage.getItem(key) || "[]");
 
         if (arr.length >= 3) {
@@ -66,7 +70,7 @@ export default function Routine({ currentUserId, onExpChange }) {
             return;
         }
 
-        // KST 기준 현재 시각을 HH:MM:SS 형태로 가져오기
+        // KST 기준 HH:MM:SS 형태 시간
         const now = new Date();
         const kstTime = now.toLocaleTimeString("ko-KR", {
             hour12: false,
@@ -76,16 +80,25 @@ export default function Routine({ currentUserId, onExpChange }) {
         arr.push({ text: newRoutineText.trim(), time: kstTime });
         localStorage.setItem(key, JSON.stringify(arr));
 
-        // 경험치 +10
-        const expKey = `exp-${currentUserId}`;
-        const currentExp = parseInt(localStorage.getItem(expKey) || "0", 10);
-        const updatedExp = currentExp + 10;
-        localStorage.setItem(expKey, updatedExp);
-        onExpChange(updatedExp);
+        // **유저 전체 경험치 풀(userExp) +10**
+        const userExpKey = getUserExpKey(currentUserId);
+        const prevUserExp = parseInt(
+            localStorage.getItem(userExpKey) || "0",
+            10
+        );
+        const nextUserExp = prevUserExp + 10;
+        localStorage.setItem(userExpKey, nextUserExp);
 
-        setStatusMsg("루틴 기록 완료! (+10 exp)");
+        setStatusMsg("루틴 기록 완료! (exp +10)");
         setNewRoutineText("");
         loadRoutines();
+    };
+
+    // 유저 전체 EXP 풀을 화면에 간단히 보여줄 때 사용 (옵션)
+    const getUserExp = () => {
+        if (!currentUserId) return 0;
+        const key = getUserExpKey(currentUserId);
+        return parseInt(localStorage.getItem(key) || "0", 10);
     };
 
     return (
@@ -106,13 +119,17 @@ export default function Routine({ currentUserId, onExpChange }) {
                 />
             </div>
 
-            <ul className="list-group w-60 mx-auto mb-3 text-start">
+            {/* 유저 전체 경험치 풀을 화면에 보여주고 싶다면 uncomment ↓ */}
+            {/* <p className="mb-3 text-info">
+        현재 유저 경험치 풀: <strong>{getUserExp()}</strong>
+      </p> */}
+
+            <ul className="list-group w-75 mx-auto mb-3 text-start">
                 {currentUserId ? (
                     existingRoutines.length > 0 ? (
                         existingRoutines.map((item, idx) => (
                             <li key={idx} className="list-group-item">
-                                {idx + 1}회차
-                                {/* 개행을 살리기 위해 아래처럼 wrapping */}
+                                {idx + 1}회차{" "}
                                 <div
                                     style={{
                                         whiteSpace: "pre-wrap",
@@ -134,7 +151,7 @@ export default function Routine({ currentUserId, onExpChange }) {
             </ul>
 
             <textarea
-                className="form-control w-60 mx-auto mb-3"
+                className="form-control w-75 mx-auto mb-3"
                 rows="2"
                 placeholder="루틴을 입력하세요"
                 value={newRoutineText}
