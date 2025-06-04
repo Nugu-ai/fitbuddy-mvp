@@ -89,7 +89,7 @@ export default function Routine({ currentUserId }) {
         const nextUserExp = prevUserExp + 10;
         localStorage.setItem(userExpKey, nextUserExp);
 
-        setStatusMsg("루틴 기록 완료! (exp +10)");
+        setStatusMsg("루틴 기록 완료! (프로틴 +10)");
         setNewRoutineText("");
         loadRoutines();
     };
