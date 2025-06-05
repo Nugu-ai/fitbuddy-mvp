@@ -109,6 +109,13 @@ function App() {
                 <nav className="navbar navbar-dark bg-dark">
                     <div className="container-fluid">
                         <span className="navbar-brand">
+                            <img
+                                src="img/logo.jpg"
+                                alt="Logo"
+                                width="50"
+                                height="50"
+                                class="me-2"
+                            ></img>
                             FitBuddy Connection
                         </span>
                     </div>
