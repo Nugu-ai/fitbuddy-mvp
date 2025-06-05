@@ -4,10 +4,63 @@ import axios from "axios";
 
 // ---------------------------------------
 // Google Apps Script 웹앱 URL
-// (반드시 웹앱으로 배포한 URL을 넣어주세요)
+// (반드시 실제로 배포된 웹앱 URL을 넣어주세요)
 // ---------------------------------------
 const SCRIPT_URL =
-  "https://script.google.com/macros/s/AKfycbyd7cpGUGtVsNQdDm3jVIV-PVcFK4vvlY4RHMGKKpsqnzZC2FrMZyTOoqNsFAGjsX5z6g/exec";
+  "https://script.google.com/macros/s/AKfycbwS5isKVX48cuAkafURvGgLDh2AIpZhHWTBxob_mHVsKQ14f53BwE4jCOGjg6_8VGjBfA/exec";
+
+// ---------------------------------------
+// JSONP 래퍼("JSON_CALLBACK({...})") 와 순수 JSON 모두 파싱하는 함수
+// ---------------------------------------
+function parseJsonpResponse(txt) {
+  if (typeof txt !== "string") {
+    // axios가 이미 객체로 바꿔줬다면 그대로 반환
+    return txt;
+  }
+  const trimmed = txt.trim();
+  const firstParen = trimmed.indexOf("(");
+  const lastParen = trimmed.lastIndexOf(")");
+  if (firstParen !== -1 && lastParen !== -1 && lastParen > firstParen) {
+    // "JSON_CALLBACK({...})" 형태라면 중간 JSON 부분만 파싱
+    const jsonStr = trimmed.substring(firstParen + 1, lastParen);
+    return JSON.parse(jsonStr);
+  }
+  // 순수 JSON이라면 그대로 파싱
+  return JSON.parse(trimmed);
+}
+
+// ---------------------------------------
+// 서버 “users” 시트에 protein 값을 업데이트하는 함수
+// - userid: 실제 users 테이블의 id 값 (string)
+// - newProtein: 업데이트할 프로틴 값 (number)
+// ---------------------------------------
+async function updateUserProteinOnServer(userid, newProtein) {
+  if (!userid) return;
+  try {
+    const res = await axios.get(SCRIPT_URL, {
+      params: {
+        action: "update",
+        table: "users",
+        id: userid,
+        data: JSON.stringify({ protein: newProtein }),
+        callback: "JSON_CALLBACK",
+      },
+      responseType: "text",
+    });
+    console.log("[Routine] updateUserProteinOnServer(raw):", res.data);
+    const parsed = parseJsonpResponse(res.data);
+    if (parsed.success || parsed.successs) {
+      console.log("[Routine] updateUserProteinOnServer 성공:", parsed.data);
+    } else {
+      console.warn(
+        "[Routine] updateUserProteinOnServer 실패:",
+        parsed.data.error || parsed.data
+      );
+    }
+  } catch (err) {
+    console.error("[Routine] updateUserProteinOnServer 오류:", err);
+  }
+}
 
 export default function Routine({ currentUserId }) {
   const [selectedDate, setSelectedDate] = useState(
@@ -16,6 +69,9 @@ export default function Routine({ currentUserId }) {
   const [existingRoutines, setExistingRoutines] = useState([]);
   const [newRoutineText, setNewRoutineText] = useState("");
   const [statusMsg, setStatusMsg] = useState("");
+
+  // <— 새로 추가: 루틴 등록 로딩 플래그
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // “오늘 날짜” 계산 (YYYY-MM-DD)
   const getToday = () => {
@@ -32,10 +88,10 @@ export default function Routine({ currentUserId }) {
   // localStorage 키 형식: routines-<userId>-<YYYY-MM-DD>
   const getRoutineKey = (userId, date) => `routines-${userId}-${date}`;
 
-  // localStorage 키: 유저 전체 프로틴 풀
+  // localStorage 키: 유저 전체 경험치 풀 (프로틴)
   const getUserExpKey = (userId) => `userExp-${userId}`;
 
-  // 선택된 날짜의 루틴 목록 로드
+  // 선택된 날짜의 루틴 목록 로드 (로컬스토리지 기준)
   const loadRoutines = () => {
     if (!currentUserId) {
       setExistingRoutines([]);
@@ -56,52 +112,14 @@ export default function Routine({ currentUserId }) {
     setStatusMsg("");
   };
 
-  // 서버 “users” 테이블의 프로틴을 가져오는 함수
-  const fetchUserProtein = async (userid) => {
-    try {
-      const res = await axios.get(SCRIPT_URL, {
-        params: { action: "read", table: "users" },
-        responseType: "text",
-      });
-      const txt = res.data;
-      let allUsers = [];
-      if (typeof txt === "string" && txt.startsWith("undefined(")) {
-        const jsonStr = txt.slice("undefined(".length, -1);
-        const parsed = JSON.parse(jsonStr);
-        allUsers = parsed.success ? parsed.data : [];
-      } else {
-        const parsed = JSON.parse(txt);
-        allUsers = parsed.success ? parsed.data : [];
-      }
-      const found = allUsers.find((row) => row.id === userid);
-      return found ? parseInt(found.protein, 10) : 0;
-    } catch (err) {
-      console.error("Routine: users 프로틴 조회 오류:", err);
-      return 0;
-    }
+  // 유저 전체 EXP 풀을 화면에 간단히 보여줄 때 사용
+  const getUserExp = () => {
+    if (!currentUserId) return 0;
+    const key = getUserExpKey(currentUserId);
+    return parseInt(localStorage.getItem(key) || "0", 10);
   };
 
-  // 서버 “users” 테이블의 프로틴 값을 업데이트하는 함수
-  const updateUserProteinOnServer = async (rowId, newProtein) => {
-    if (!rowId) return;
-    try {
-      const res = await axios.get(SCRIPT_URL, {
-        params: {
-          action: "update",
-          table: "users",
-          id: rowId,
-          data: JSON.stringify({ protein: newProtein }),
-        },
-        responseType: "text",
-      });
-      const txt = res.data;
-      console.log("Routine: users 프로틴 업데이트 응답 raw:", txt);
-      // (실제로는 JSONP 형태이므로, 파싱 로직은 생략)
-    } catch (err) {
-      console.error("Routine: users 프로틴 업데이트 요청 오류:", err);
-    }
-  };
-
+  // 루틴 제출 핸들러
   const submitRoutine = async () => {
     if (!currentUserId) {
       alert("로그인 후에 루틴을 기록할 수 있습니다.");
@@ -117,72 +135,80 @@ export default function Routine({ currentUserId }) {
       return;
     }
 
-    const key = getRoutineKey(currentUserId, selectedDate);
-    const arr = JSON.parse(localStorage.getItem(key) || "[]");
+    // 1) 로딩 시작
+    setIsSubmitting(true);
 
-    if (arr.length >= 3) {
-      setStatusMsg("선택한 날짜에 이미 3개의 루틴을 입력했습니다.");
-      return;
-    }
+    try {
+      // 2) 로컬스토리지에 루틴 저장
+      const key = getRoutineKey(currentUserId, selectedDate);
+      const arr = JSON.parse(localStorage.getItem(key) || "[]");
 
-    // KST 기준 HH:MM:SS 형태 시간
-    const now = new Date();
-    const kstTime = now.toLocaleTimeString("ko-KR", {
-      hour12: false,
-      timeZone: "Asia/Seoul",
-    });
+      if (arr.length >= 3) {
+        setStatusMsg("선택한 날짜에 이미 3개의 루틴을 입력했습니다.");
+        return;
+      }
 
-    // 1) 로컬스크토리지에 루틴 저장
-    arr.push({ text: newRoutineText.trim(), time: kstTime });
-    localStorage.setItem(key, JSON.stringify(arr));
-
-    // 2) 로컬스크토리지에 프로틴(+10) 업데이트
-    const userExpKey = getUserExpKey(currentUserId);
-    const prevUserExp = parseInt(localStorage.getItem(userExpKey) || "0", 10);
-    const nextUserExp = prevUserExp + 10;
-    localStorage.setItem(userExpKey, nextUserExp);
-
-    // 3) 서버 “users” 테이블에도 프로틴(+10) 업데이트
-    //    서버상의 protein 값을 먼저 가져와서, +10 하여 update 요청
-    const serverPrevProtein = await fetchUserProtein(currentUserId);
-    const serverNextProtein = serverPrevProtein + 10;
-    await updateUserProteinOnServer(currentUserId, serverNextProtein);
-
-    setStatusMsg("루틴 기록 완료! (프로틴 +10)");
-    setNewRoutineText("");
-    loadRoutines();
-
-    // 4) 서버 “routines” 테이블에도 INSERT
-    const routineData = {
-      id: Date.now().toString(),
-      userid: currentUserId,
-      date: selectedDate,
-      time: kstTime,
-      routine: newRoutineText.trim(),
-    };
-    axios
-      .get(SCRIPT_URL, {
-        params: {
-          action: "insert",
-          table: "routines",
-          data: JSON.stringify(routineData),
-        },
-        responseType: "text",
-      })
-      .then((res) => {
-        console.log("Routine: routines 삽입 응답 raw:", res.data);
-      })
-      .catch((err) => {
-        console.error("Routine: routines 삽입 요청 오류:", err);
+      // KST 기준 HH:MM:SS 형태 시간
+      const now = new Date();
+      const kstTime = now.toLocaleTimeString("ko-KR", {
+        hour12: false,
+        timeZone: "Asia/Seoul",
       });
-  };
 
-  // 유저 전체 EXP 풀을 화면에 간단히 보여주고 싶다면 아래 주석 해제
-  // const getUserExp = () => {
-  //   if (!currentUserId) return 0;
-  //   const key = getUserExpKey(currentUserId);
-  //   return parseInt(localStorage.getItem(key) || "0", 10);
-  // };
+      arr.push({ text: newRoutineText.trim(), time: kstTime });
+      localStorage.setItem(key, JSON.stringify(arr));
+
+      // 3) 로컬스토리지에 유저 전체 경험치 풀(userExp) +10
+      const userExpKey = getUserExpKey(currentUserId);
+      const prevUserExp = parseInt(localStorage.getItem(userExpKey) || "0", 10);
+      const nextUserExp = prevUserExp + 10;
+      localStorage.setItem(userExpKey, nextUserExp);
+
+      // 메시지 업데이트 후 목록 리로드
+      setStatusMsg("루틴 기록 완료! (프로틴 +10)");
+      setNewRoutineText("");
+      loadRoutines();
+
+      // 4) 서버 측 routines 테이블에도 INSERT
+      const routineData = {
+        id: Date.now().toString(), // 밀리초 기반 timestamp 고유 ID
+        userid: currentUserId,
+        date: selectedDate,
+        time: kstTime,
+        routine: newRoutineText.trim(),
+      };
+
+      try {
+        const res = await axios.get(SCRIPT_URL, {
+          params: {
+            action: "insert",
+            table: "routines",
+            data: JSON.stringify(routineData),
+            callback: "JSON_CALLBACK",
+          },
+          responseType: "text",
+        });
+        console.log("[Routine] routines 삽입 raw:", res.data);
+        const parsed = parseJsonpResponse(res.data);
+        if (parsed.success || parsed.successs) {
+          console.log("[Routine] routines 삽입 성공:", parsed.data);
+        } else {
+          console.warn("[Routine] routines 삽입 실패:", parsed.data.error);
+        }
+      } catch (err) {
+        console.error("[Routine] routines 삽입 요청 오류:", err);
+      }
+
+      // 5) 서버 users 테이블의 protein 칼럼을 “nextUserExp”로 업데이트
+      await updateUserProteinOnServer(currentUserId, nextUserExp);
+    } catch (err) {
+      console.error("[Routine] 루틴 등록 중 오류:", err);
+      alert("루틴 등록 중 오류가 발생했습니다.");
+    } finally {
+      // 6) 로딩 끝
+      setIsSubmitting(false);
+    }
+  };
 
   return (
     <div className="text-center">
@@ -199,12 +225,13 @@ export default function Routine({ currentUserId }) {
           value={selectedDate}
           onChange={handleDateChange}
           max={todayDate}
+          disabled={isSubmitting}
         />
       </div>
 
-      {/* 유저 전체 프로틴 풀을 화면에 보여주고 싶다면 아래 주석 해제 */}
+      {/* 유저 전체 경험치 풀 (프로틴)을 화면에 보여주고 싶다면 아래 주석 해제 */}
       {/* <p className="mb-3 text-info">
-        현재 유저 프로틴 풀: <strong>{getUserExp()}</strong>
+        현재 유저 경험치 풀: <strong>{getUserExp()}</strong>
       </p> */}
 
       <ul className="list-group w-75 mx-auto mb-3 text-start">
@@ -239,11 +266,38 @@ export default function Routine({ currentUserId }) {
         placeholder="루틴을 입력하세요"
         value={newRoutineText}
         onChange={(e) => setNewRoutineText(e.target.value)}
+        disabled={isSubmitting}
       />
-      <button className="btn btn-success mb-2" onClick={submitRoutine}>
-        기록하기
+      <button
+        className="btn btn-success"
+        onClick={submitRoutine}
+        disabled={isSubmitting}
+      >
+        {isSubmitting ? "등록 중…" : "기록하기"}
       </button>
       {statusMsg && <p className="mt-2 text-info">{statusMsg}</p>}
+
+      {/* ——— 전체 화면 오버레이 + 중앙 스피너 ——— */}
+      {isSubmitting && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: "100vw",
+            height: "100vh",
+            backgroundColor: "rgba(0,0,0,0.3)",
+            zIndex: 9999,
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+          }}
+        >
+          <div className="spinner-border text-light" role="status">
+            <span className="visually-hidden">Loading...</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

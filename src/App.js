@@ -11,7 +11,7 @@ import "./index.css"; // 필요 스타일
 // Google Apps Script 웹앱 URL (Login.js와 동일)
 // ---------------------------------------
 const SCRIPT_URL =
-    "https://script.google.com/macros/s/AKfycbyd7cpGUGtVsNQdDm3jVIV-PVcFK4vvlY4RHMGKKpsqnzZC2FrMZyTOoqNsFAGjsX5z6g/exec";
+    "https://script.google.com/macros/s/AKfycbwS5isKVX48cuAkafURvGgLDh2AIpZhHWTBxob_mHVsKQ14f53BwE4jCOGjg6_8VGjBfA/exec";
 
 function App() {
     // 이제 currentUserId는 “users” 시트의 id (timestamp) 입니다.

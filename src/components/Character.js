@@ -1,13 +1,19 @@
 // src/components/Character.js
 import React, { useState, useEffect } from "react";
 import axios from "axios";
+import Lottie from "lottie-react";
+
+// ---------------------------------------
+// Lottie JSON 파일 (src/lottie/levelup.json)
+// ---------------------------------------
+import levelUpAnimation from "../lottie/levelup.json";
 
 // ---------------------------------------
 // Google Apps Script 웹앱 URL
-// (앱 스크립트를 웹앱으로 배포한 URL을 정확히 입력)
+// (반드시 실제로 배포된 URL로 바꿔주세요)
 // ---------------------------------------
 const SCRIPT_URL =
-    "https://script.google.com/macros/s/AKfycbyd7cpGUGtVsNQdDm3jVIV-PVcFK4vvlY4RHMGKKpsqnzZC2FrMZyTOoqNsFAGjsX5z6g/exec";
+    "https://script.google.com/macros/s/AKfycbwS5isKVX48cuAkafURvGgLDh2AIpZhHWTBxob_mHVsKQ14f53BwE4jCOGjg6_8VGjBfA/exec";
 
 // ---------------------------------------
 // 캐릭터 목록: ID, 이름, 이미지 경로
@@ -19,23 +25,33 @@ const CHARACTER_LIST = [
 ];
 
 /**
- * JSONP 형태의 Google Apps Script 응답을 파싱해서
- * { success: boolean, successs: boolean, data: any } 객체를 리턴합니다.
+ * JSONP 혹은 순수 JSON 형태의 응답을
+ * { success: boolean, successs: boolean, data: any } 형태로 리턴합니다.
  */
 function parseJsonpResponse(txt) {
-    if (typeof txt === "string" && txt.startsWith("undefined(")) {
+    if (!txt || typeof txt !== "string") {
+        return { success: false, successs: false, data: null };
+    }
+    let str = txt.trim();
+    const firstBrace = str.indexOf("{");
+    const lastBrace = str.lastIndexOf("}");
+    if (firstBrace >= 0 && lastBrace > firstBrace) {
+        const jsonCandidate = str.slice(firstBrace, lastBrace + 1);
         try {
-            const jsonStr = txt.slice("undefined(".length, -1);
-            return JSON.parse(jsonStr);
+            return JSON.parse(jsonCandidate);
         } catch (e) {
-            console.error("parseJsonpResponse: JSONP 파싱 실패:", e, txt);
+            console.error(
+                "parseJsonpResponse: JSON.parse 실패:",
+                e,
+                jsonCandidate
+            );
             return { success: false, successs: false, data: null };
         }
     }
     try {
-        return JSON.parse(txt);
+        return JSON.parse(str);
     } catch (e) {
-        console.error("parseJsonpResponse: 순수 JSON 파싱 실패:", e, txt);
+        console.error("parseJsonpResponse: 순수 JSON 파싱 실패:", e, str);
         return { success: false, successs: false, data: null };
     }
 }
@@ -43,8 +59,10 @@ function parseJsonpResponse(txt) {
 export default function Character({ currentUserId }) {
     // 현재 선택된 캐릭터 ID (기본: 첫 번째 캐릭터)
     const [selectedCharId, setSelectedCharId] = useState(CHARACTER_LIST[0].id);
-    // { [charId]: level } 형태로 캐릭터별 레벨을 저장
+    // { [charId]: level } 형태로 캐릭터별 레벨 저장
     const [levelMap, setLevelMap] = useState({});
+    // 레벨업 중 플래그 (로딩 애니메이션용)
+    const [isLevelingUp, setIsLevelingUp] = useState(false);
 
     // “레벨업에 필요한 프로틴” 계산: 현재 레벨 n → 필요 프로틴 = n
     const getRequiredProtein = (level) => level;
@@ -62,7 +80,7 @@ export default function Character({ currentUserId }) {
     };
 
     /**
-     * localStorage에서 “level-<userId>-<charId>”들을 읽어와 levelMap을 구성
+     * localStorage에서 “level-<userId>-<charId>”들을 읽어와 levelMap 초기화
      */
     const loadAllLevels = () => {
         if (!currentUserId) {
@@ -80,13 +98,13 @@ export default function Character({ currentUserId }) {
         });
         setLevelMap(map);
 
-        // 만약 현재 선택된 캐릭터 ID가 CHARACTER_LIST에 없으면 첫 번째로 fallback
+        // 선택된 캐릭터가 목록에 없다면 첫 번째로 fallback
         if (!CHARACTER_LIST.some((c) => c.id === selectedCharId)) {
             setSelectedCharId(CHARACTER_LIST[0].id);
         }
     };
 
-    // 컴포넌트 마운트되거나 currentUserId가 변경될 때마다 레벨 정보 로드
+    // 컴포넌트 마운트되거나 currentUserId가 바뀔 때마다 레벨 정보 로드
     useEffect(() => {
         loadAllLevels();
     }, [currentUserId]);
@@ -102,15 +120,14 @@ export default function Character({ currentUserId }) {
                 params: { action: "read", table: "users" },
                 responseType: "text",
             });
+            console.log("[Character] fetchUserProtein raw:", res.data);
             const parsed = parseJsonpResponse(res.data);
-            if (!parsed.success && !parsed.successs) return 0;
-
+            if (!(parsed.success || parsed.successs)) return 0;
             const allUsers = parsed.data || [];
-            // 타입 차이(숫자 vs 문자열) 방지를 위해 String()으로 비교
             const found = allUsers.find(
-                (row) => String(row.id) === String(userid)
+                (row) => String(row.id).trim() === String(userid).trim()
             );
-            return found ? parseInt(found.protein, 10) : 0;
+            return found ? parseInt(found.protein || "0", 10) : 0;
         } catch (err) {
             console.error("Character: fetchUserProtein 오류:", err);
             return 0;
@@ -118,7 +135,7 @@ export default function Character({ currentUserId }) {
     };
 
     /**
-     * 서버 “users” 시트에서 rowId의 protein 값을 업데이트
+     * 서버 “users” 시트에서 해당 rowId의 protein 값을 업데이트
      * @param {string} rowId
      * @param {number} newProtein
      */
@@ -134,8 +151,8 @@ export default function Character({ currentUserId }) {
                 },
                 responseType: "text",
             });
+            console.log("[Character] updateUserProteinOnServer raw:", res.data);
             const parsed = parseJsonpResponse(res.data);
-            // success 혹은 successs가 true면 성공 ⇒ 로그 남김
             if (parsed.success || parsed.successs) {
                 console.log(
                     "[Character] updateUserProteinOnServer 성공:",
@@ -153,107 +170,41 @@ export default function Character({ currentUserId }) {
     };
 
     /**
-     * 서버 “user_characters” 시트에서 (userid,charId)에 해당하는 row를 찾아 ID 리턴
-     * @param {string} userid
-     * @param {string} charId
-     * @returns {Promise<string|null>}
-     */
-    const fetchCharacterRowId = async (userid, charId) => {
-        try {
-            const res = await axios.get(SCRIPT_URL, {
-                params: { action: "read", table: "user_characters" },
-                responseType: "text",
-            });
-            const parsed = parseJsonpResponse(res.data);
-            if (!parsed.success && !parsed.successs) return null;
-
-            const allRows = parsed.data || [];
-            const found = allRows.find(
-                (row) =>
-                    String(row.userid) === String(userid) &&
-                    String(row.charId) === String(charId)
-            );
-            return found ? found.id : null;
-        } catch (err) {
-            console.error("Character: fetchCharacterRowId 오류:", err);
-            return null;
-        }
-    };
-
-    /**
-     * 서버 “user_characters” 시트에 레벨 저장
+     * 서버 “user_characters” 시트에 레벨(newLevel)을 저장
+     * (userid, charId 조합만으로 업데이트 또는 insert)
      * @param {string} userid
      * @param {string} charId
      * @param {number} newLevel
      */
     const saveCharacterLevelOnServer = async (userid, charId, newLevel) => {
-        const existingRowId = await fetchCharacterRowId(userid, charId);
-
-        if (existingRowId) {
-            // UPDATE
-            try {
-                const res = await axios.get(SCRIPT_URL, {
-                    params: {
-                        action: "update",
-                        table: "user_characters",
-                        id: existingRowId,
-                        data: JSON.stringify({ level: newLevel }),
-                    },
-                    responseType: "text",
-                });
-                const parsed = parseJsonpResponse(res.data);
-                if (parsed.success || parsed.successs) {
-                    console.log(
-                        "[Character] saveCharacterLevelOnServer(update) 성공:",
-                        parsed.data
-                    );
-                } else {
-                    console.warn(
-                        "[Character] saveCharacterLevelOnServer(update) 실패:",
-                        parsed.data
-                    );
-                }
-            } catch (err) {
-                console.error(
-                    "Character: saveCharacterLevelOnServer(update) 오류:",
-                    err
+        try {
+            const res = await axios.get(SCRIPT_URL, {
+                params: {
+                    action: "updateUserCharLevel",
+                    userid: userid,
+                    charId: charId,
+                    level: newLevel,
+                },
+                responseType: "text",
+            });
+            console.log(
+                `[Character] saveCharacterLevelOnServer raw (userid=${userid}, charId=${charId}):`,
+                res.data
+            );
+            const parsed = parseJsonpResponse(res.data);
+            if (parsed.success || parsed.successs) {
+                console.log(
+                    "[Character] saveCharacterLevelOnServer 성공:",
+                    parsed.data
+                );
+            } else {
+                console.warn(
+                    "[Character] saveCharacterLevelOnServer 실패:",
+                    parsed.data
                 );
             }
-        } else {
-            // INSERT
-            const newRowData = {
-                id: Date.now().toString() + "_" + charId,
-                userid: userid,
-                charId: charId,
-                level: newLevel,
-            };
-            try {
-                const res = await axios.get(SCRIPT_URL, {
-                    params: {
-                        action: "insert",
-                        table: "user_characters",
-                        data: JSON.stringify(newRowData),
-                    },
-                    responseType: "text",
-                });
-                const parsed = parseJsonpResponse(res.data);
-                if (parsed.success || parsed.successs) {
-                    console.log(
-                        "[Character] saveCharacterLevelOnServer(insert) 성공:",
-                        parsed.data
-                    );
-                } else {
-                    console.warn(
-                        "[Character] saveCharacterLevelOnServer(insert) 실패:",
-                        parsed.data
-                    );
-                }
-            } catch (err) {
-                console.error(
-                    "Character: saveCharacterLevelOnServer(insert) 오류:",
-                    err
-                );
-            }
+        } catch (err) {
+            console.error("Character: saveCharacterLevelOnServer 오류:", err);
         }
     };
 
@@ -263,45 +214,66 @@ export default function Character({ currentUserId }) {
     const handleLevelUp = async () => {
         if (!currentUserId) return;
 
-        // 1) 서버에서 프로틴을 읽어와 로컬과 동기화
-        const serverProtein = await fetchUserProtein(currentUserId);
-        const localProtein = getUserExp();
-        if (localProtein !== serverProtein) {
-            localStorage.setItem(getUserExpKey(currentUserId), serverProtein);
-        }
+        // 1) 레벨업 시작 → Lottie 애니메이션 보여주기 (루프)
+        setIsLevelingUp(true);
 
-        // 2) 현재 레벨, 필요 프로틴 계산
-        const prevLevel = levelMap[selectedCharId] || 1;
-        const required = getRequiredProtein(prevLevel);
+        try {
+            // 2) 서버 프로틴 읽기 → 로컬 동기화
+            const serverProtein = await fetchUserProtein(currentUserId);
+            const localProtein = getUserExp();
+            if (localProtein !== serverProtein) {
+                console.log(
+                    `[Character] 로컬 프로틴 (${localProtein}) != 서버 프로틴 (${serverProtein}), 동기화`
+                );
+                localStorage.setItem(
+                    getUserExpKey(currentUserId),
+                    serverProtein
+                );
+            }
 
-        if (serverProtein < required) {
-            alert("프로틴이 부족합니다! 루틴을 더 기록하세요.");
+            // 3) 현재 레벨, 필요 프로틴 계산
+            const prevLevel = levelMap[selectedCharId] || 1;
+            const required = getRequiredProtein(prevLevel);
+            if (serverProtein < required) {
+                alert("프로틴이 부족합니다! 루틴을 더 기록하세요.");
+                // 애니메이션 중단
+                setIsLevelingUp(false);
+                return;
+            }
+
+            // 4) 레벨업 로직
+            const nextLevel = prevLevel + 1;
+            const nextProtein = serverProtein - required;
+
+            // 5) 로컬 업데이트 (levelMap, userExp)
+            const lvlKey = getLevelKey(currentUserId, selectedCharId);
+            localStorage.setItem(lvlKey, nextLevel);
+            localStorage.setItem(getUserExpKey(currentUserId), nextProtein);
+            setLevelMap((prev) => ({
+                ...prev,
+                [selectedCharId]: nextLevel,
+            }));
+            console.log(
+                `[Character] 로컬 레벨업: charId=${selectedCharId}, 레벨 ${prevLevel}→${nextLevel}, 프로틴 ${serverProtein}→${nextProtein}`
+            );
+
+            // 6) 서버 user_characters 업데이트
+            await saveCharacterLevelOnServer(
+                currentUserId,
+                selectedCharId,
+                nextLevel
+            );
+            // 7) 서버 users 테이블의 프로틴 업데이트
+            await updateUserProteinOnServer(currentUserId, nextProtein);
+        } catch (e) {
+            console.error("[Character] 레벨업 중 오류:", e);
+            alert("레벨업 중 오류가 발생했습니다.");
+            setIsLevelingUp(false);
             return;
         }
 
-        // 3) 레벨업 로직
-        const nextLevel = prevLevel + 1;
-        const nextProtein = serverProtein - required;
-
-        // 4) 로컬 업데이트 (levelMap, userExp)
-        const lvlKey = getLevelKey(currentUserId, selectedCharId);
-        localStorage.setItem(lvlKey, nextLevel);
-        localStorage.setItem(getUserExpKey(currentUserId), nextProtein);
-
-        setLevelMap((prev) => ({
-            ...prev,
-            [selectedCharId]: nextLevel,
-        }));
-
-        // 5) 서버 “user_characters” 업데이트
-        await saveCharacterLevelOnServer(
-            currentUserId,
-            selectedCharId,
-            nextLevel
-        );
-
-        // 6) 서버 “users” 프로틴 업데이트
-        await updateUserProteinOnServer(currentUserId, nextProtein);
+        // 8) 애니메이션이 끝난 뒤 중단
+        setIsLevelingUp(false);
     };
 
     // 현재 선택된 캐릭터 객체 (없으면 첫 번째로 fallback)
@@ -315,6 +287,41 @@ export default function Character({ currentUserId }) {
 
     return (
         <div className="text-center">
+            {/* 레벨업 애니메이션 위치: 상단에 Lottie를 루프 켜두기 */}
+            {isLevelingUp && (
+                <div
+                    style={{
+                        display: "flex",
+                        justifyContent: "center",
+                        gap: "20px",
+                        marginBottom: "20px",
+                    }}
+                >
+                    {/* 원하는 개수만큼 복제해서 여러 개 배치 */}
+                    <div style={{ width: 100, height: 100 }}>
+                        <Lottie
+                            animationData={levelUpAnimation}
+                            loop={true}
+                            autoplay={true}
+                        />
+                    </div>
+                    <div style={{ width: 100, height: 100 }}>
+                        <Lottie
+                            animationData={levelUpAnimation}
+                            loop={true}
+                            autoplay={true}
+                        />
+                    </div>
+                    <div style={{ width: 100, height: 100 }}>
+                        <Lottie
+                            animationData={levelUpAnimation}
+                            loop={true}
+                            autoplay={true}
+                        />
+                    </div>
+                </div>
+            )}
+
             {/** 상단: 선택된 캐릭터 큰 뷰 **/}
             <div className="mb-4">
                 <img
@@ -335,8 +342,11 @@ export default function Character({ currentUserId }) {
                             : "btn-secondary")
                     }
                     onClick={handleLevelUp}
+                    disabled={isLevelingUp}
                 >
-                    레벨업 {userExp} / {requiredProteinForNext}
+                    {isLevelingUp
+                        ? "레벨업 중…"
+                        : `레벨업 ${userExp} / ${requiredProteinForNext}`}
                 </button>
             </div>
 
