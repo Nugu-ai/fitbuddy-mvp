@@ -5,231 +5,104 @@ import Login from "./components/Login";
 import Routine from "./components/Routine";
 import Character from "./components/Character";
 import Ranking from "./components/Ranking";
-import "./index.css"; // login-background, login-card 등 스타일
+import "./index.css"; // 필요 스타일
 
 // ---------------------------------------
-// 1) Google Apps Script 웹앱 URL
+// Google Apps Script 웹앱 URL (Login.js와 동일)
 // ---------------------------------------
 const SCRIPT_URL =
     "https://script.google.com/macros/s/AKfycbyd7cpGUGtVsNQdDm3jVIV-PVcFK4vvlY4RHMGKKpsqnzZC2FrMZyTOoqNsFAGjsX5z6g/exec";
 
-// ---------------------------------------
-// 2) 유틸 함수: 타임스탬프, 쿠키, IP, 디바이스 구하기
-// ---------------------------------------
-function padValue(value) {
-    return value < 10 ? "0" + value : value;
-}
-
-function getTimeStamp() {
-    const d = new Date();
-    const year = d.getFullYear();
-    const month = d.getMonth() + 1;
-    const day = d.getDate();
-    const hours = d.getHours();
-    const minutes = d.getMinutes();
-    const seconds = d.getSeconds();
-    return `${padValue(year)}-${padValue(month)}-${padValue(day)} ${padValue(
-        hours
-    )}:${padValue(minutes)}:${padValue(seconds)}`;
-}
-
-function getCookieValue(name) {
-    const value = "; " + document.cookie;
-    const parts = value.split("; " + name + "=");
-    if (parts.length === 2) return parts.pop().split(";").shift();
-}
-
-function setCookieValue(name, value, days) {
-    let expires = "";
-    if (days) {
-        const date = new Date();
-        date.setTime(date.getTime() + days * 24 * 60 * 60 * 1000);
-        expires = "; expires=" + date.toUTCString();
-    }
-    document.cookie = name + "=" + (value || "") + expires + "; path=/";
-}
-
-function getUVfromCookie() {
-    const hash = Math.random().toString(36).substring(2, 8).toUpperCase();
-    const existing = getCookieValue("user");
-    if (!existing) {
-        setCookieValue("user", hash, 180);
-        return hash;
-    }
-    return existing;
-}
-
-let ip = "unknown";
-
-function setIP(json) {
-    try {
-        ip = json.ip;
-        console.log("JSONP 콜백에서 가져온 IP:", ip);
-    } catch {
-        ip = "unknown";
-    }
-}
-window.setIP = setIP; // 전역에 등록해야 JSONP 콜백이 호출됩니다
-
-function loadIP() {
-    console.log("loadIP() 호출됨");
-    const script = document.createElement("script");
-    script.src = "https://jsonip.com?format=jsonp&callback=setIP";
-    script.onerror = () => console.warn("JSONP 스크립트 로드 실패");
-    document.head.appendChild(script);
-}
-
-function getDevice() {
-    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
-        navigator.userAgent
-    )
-        ? "mobile"
-        : "desktop";
-}
-
-// ---------------------------------------
-// 3) App 컴포넌트
-// ---------------------------------------
 function App() {
+    // 이제 currentUserId는 “users” 시트의 id (timestamp) 입니다.
     const [currentUserId, setCurrentUserId] = useState(null);
+    // 로그인한 유저의 “화면에 표시할 이름(username)”을 저장
+    const [displayName, setDisplayName] = useState("");
     const [activeTab, setActiveTab] = useState("routine");
     const [userExp, setUserExp] = useState(0);
 
-    // 3-1) 컴포넌트 마운트 시점: IP 로드 + visitor 테이블에 삽입
+    // 1) 마운트 시점: localStorage 에 저장된 currentUserId 복원
     useEffect(() => {
-        loadIP(); // JSONP 호출로 ip 업데이트
-
-        const timeoutId = setTimeout(() => {
-            const visitorId = getUVfromCookie();
-            const landingUrl = window.location.href;
-            const referer = document.referrer || "";
-            const timestamp = getTimeStamp();
-            const utm =
-                new URLSearchParams(window.location.search).get("utm") || "";
-            const device = getDevice();
-
-            const visitorData = JSON.stringify({
-                id: visitorId,
-                landingUrl: landingUrl,
-                ip: ip,
-                referer: referer,
-                timestamp: timestamp,
-                utm: utm,
-                device: device,
-            });
-            console.log("visitorData:", visitorData);
-
-            // ★ responseType: "text" 지정 ★
-            axios
-                .get(SCRIPT_URL, {
-                    params: {
-                        action: "insert",
-                        table: "visitors",
-                        data: visitorData,
-                    },
-                    responseType: "text",
-                })
-                .then((response) => console.log(JSON.stringify(response)))
-                .catch((error) => console.log(error));
-        }, 1000); // IP가 세팅될 시간을 주기 위해 1초 지연
-
-        return () => clearTimeout(timeoutId);
-    }, []);
-
-    // 3-2) 로컬스토리지에 저장된 currentUserId 복원
-    useEffect(() => {
-        const savedUserId = localStorage.getItem("currentUserId");
-        if (savedUserId) {
-            setCurrentUserId(savedUserId);
+        const savedId = localStorage.getItem("currentUserId");
+        if (savedId) {
+            setCurrentUserId(savedId);
+            fetchUserName(savedId);
+            loadUserExp(savedId);
         }
     }, []);
 
-    // 3-3) currentUserId 변경 시, userExpKey 읽어서 userExp 상태에 반영
+    // 2) currentUserId가 바뀔 때마다 userExp를 로컬에서 읽어옴
     useEffect(() => {
         if (!currentUserId) return;
-        const userExpKey = `userExp-${currentUserId}`;
-        const stored = parseInt(localStorage.getItem(userExpKey) || "0", 10);
-        setUserExp(stored);
-
-        const intervalId = setInterval(() => {
-            const updated = parseInt(
-                localStorage.getItem(userExpKey) || "0",
-                10
-            );
-            setUserExp(updated);
+        loadUserExp(currentUserId);
+        const iv = setInterval(() => {
+            loadUserExp(currentUserId);
         }, 1000);
-        return () => clearInterval(intervalId);
+        return () => clearInterval(iv);
     }, [currentUserId]);
 
-    // 3-4) 로그인 성공 시 호출되는 핸들러
+    // 로컬스토리지에서 userExp-<userId>를 읽어서 state에 저장
+    const loadUserExp = (userId) => {
+        const key = `userExp-${userId}`;
+        const val = parseInt(localStorage.getItem(key) || "0", 10);
+        setUserExp(val);
+    };
+
+    // Google Sheets “users” 시트에서 currentUserId(id) 에 해당하는 row의 username을 가져옴
+    const fetchUserName = async (userId) => {
+        try {
+            const res = await axios.get(SCRIPT_URL, {
+                params: { action: "read", table: "users" },
+                responseType: "text",
+            });
+            const txt = res.data;
+            let allUsers = [];
+            if (typeof txt === "string" && txt.startsWith("undefined(")) {
+                const jsonStr = txt.slice("undefined(".length, -1);
+                const parsed = JSON.parse(jsonStr);
+                allUsers = parsed.success ? parsed.data : [];
+            } else {
+                const parsed = JSON.parse(txt);
+                allUsers = parsed.success ? parsed.data : [];
+            }
+            const found = allUsers.find((row) => row.id === userId);
+            if (found) {
+                setDisplayName(found.username);
+            }
+        } catch (err) {
+            console.error("users 이름 조회 오류:", err);
+        }
+    };
+
+    // 3) 로그인 성공 시 호출되는 핸들러
+    //    onLogin(userId, isNewUser, userName, userPassword)
     const handleLoginSuccess = (userId, isNewUser, userName, userPassword) => {
         setCurrentUserId(userId);
         setActiveTab("routine");
 
-        // userExpKey 초기화 (없으면 0으로 세팅)
-        const userExpKey = `userExp-${userId}`;
-        if (!localStorage.getItem(userExpKey)) {
-            localStorage.setItem(userExpKey, "0");
+        // 로컬 프로틴 풀 초기화 (최초 가입 시 0, 기존 가입자면 이미 로컬에 있거나 0)
+        const expKey = `userExp-${userId}`;
+        if (!localStorage.getItem(expKey)) {
+            localStorage.setItem(expKey, "0");
             setUserExp(0);
         }
 
-        // 신규 사용자라면 users 테이블에 INSERT
-        if (isNewUser) {
-            const visitorId = getUVfromCookie();
-            const userData = {
-                id: Date.now().toString(), // 고유 ID로 timestamp 사용
-                visitorId: visitorId, // 쿠키 기반 ID
-                username: userName, // 입력한 사용자 이름
-                password: userPassword, // 입력한 비밀번호
-            };
+        // 화면에 보여줄 이름
+        setDisplayName(userName);
 
-            // ★ responseType: "text" 지정 ★
-            axios
-                .get(SCRIPT_URL, {
-                    params: {
-                        action: "insert",
-                        table: "users",
-                        data: JSON.stringify(userData),
-                    },
-                    responseType: "text",
-                })
-                .then((res) => {
-                    const txt = res.data;
-                    if (
-                        typeof txt === "string" &&
-                        txt.startsWith("undefined(")
-                    ) {
-                        try {
-                            const jsonStr = txt.slice("undefined(".length, -1);
-                            const parsed = JSON.parse(jsonStr);
-                            console.log("users 저장 성공:", parsed);
-                        } catch (e) {
-                            console.error("users 응답 파싱 오류:", e, txt);
-                        }
-                    } else {
-                        console.log("users 응답:", txt);
-                    }
-                })
-                .catch((err) => {
-                    console.error("users 저장 실패:", err);
-                });
-        }
+        // 신규 사용자면 서버에 이미 insert했으므로 여기서는 별도 처리 생략
     };
 
-    // 3-5) 로그아웃 처리
+    // 4) 로그아웃 핸들러
     const handleLogout = () => {
         localStorage.removeItem("currentUserId");
         setCurrentUserId(null);
+        setDisplayName("");
         setActiveTab("routine");
         setUserExp(0);
     };
 
-    const getUserName = () => {
-        if (!currentUserId) return "";
-        return currentUserId.split("__")[0];
-    };
-
-    // 3-6) 로그인 상태가 아니라면 로그인 화면만 렌더링
+    // 로그인 상태가 아니면, 로그인 폼만 렌더링
     if (!currentUserId) {
         return (
             <div className="login-background">
@@ -252,7 +125,7 @@ function App() {
         );
     }
 
-    // 3-7) 로그인 상태일 때 메인 화면 렌더링
+    // 로그인 상태일 때 메인 화면 렌더링
     return (
         <div>
             {/* 상단 네비게이션바: 브랜드명 + 내 프로틴 + 사용자 이름 + 로그아웃 */}
@@ -264,7 +137,7 @@ function App() {
                             내 프로틴: <strong>{userExp}</strong>
                         </span>
                         <span className="navbar-text text-light me-3">
-                            {getUserName()}님
+                            {displayName}님
                         </span>
                         <button
                             className="btn btn-outline-light btn-sm"
