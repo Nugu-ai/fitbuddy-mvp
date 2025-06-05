@@ -160,7 +160,9 @@ function App() {
                 {activeTab === "character" && (
                     <Character currentUserId={currentUserId} />
                 )}
-                {activeTab === "ranking" && <Ranking />}
+                {activeTab === "ranking" && (
+                    <Ranking currentUserId={currentUserId} />
+                )}
             </div>
 
             {/* 하단 네비게이션 */}

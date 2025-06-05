@@ -297,7 +297,7 @@ export default function Login({ onLogin }) {
 
     return (
         <div className="text-center">
-            <h2 className="fw-bold">간단 로그인</h2>
+            <h2 className="fw-bold">비회원 로그인</h2>
             <input
                 type="text"
                 className="form-control w-50 mx-auto mb-2"
@@ -319,7 +319,7 @@ export default function Login({ onLogin }) {
                 onClick={handleLogin}
                 disabled={isLoggingIn}
             >
-                {isLoggingIn ? "로그인 중…" : "로그인 / 신규 사용자 등록"}
+                {isLoggingIn ? "로그인 중…" : "로그인 / 회원가입"}
             </button>
             {statusMsg && <p className="mt-2 text-success">{statusMsg}</p>}
 
